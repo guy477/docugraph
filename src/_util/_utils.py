@@ -76,9 +76,9 @@ def parse_pdf_content(pdf_bytes: bytes) -> str:
             logger.info(f"Number of pages in PDF: {num_pages}")
             text = ''
             for i, page in enumerate(pdf.pages, start=1):
-                page_text = page.extract_text()
+                page_text = page.extract_text(layout=True)
                 if page_text:
-                    text += page_text + ' '  # Add space to separate pages
+                    text += page_text + '\n'  # Add space to separate pages
                     logger.debug(f"Extracted text from page {i}.")
                 else:
                     logger.warning(f"No text found on page {i}.")

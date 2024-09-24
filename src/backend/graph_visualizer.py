@@ -91,7 +91,7 @@ class GraphVisualizer:
             output_path (str): The file path to save the visualization.
         """
         self.build_graph()
-        pos = graphviz_layout(self.graph, prog='fdp')
+        pos = graphviz_layout(self.graph, prog='circo')
         labels = nx.get_node_attributes(self.graph, 'label')
         edge_labels = nx.get_edge_attributes(self.graph, 'weight')
 
