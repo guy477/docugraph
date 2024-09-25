@@ -62,7 +62,7 @@ python src/main.py
 Make sure you have a PDF file at the specified path or modify `main.py` to point to your PDF:
 
 ```python
-pdf_bytes = load_pdf_bytes("../data/your_document.pdf")
+pdf_bytes = load_pdf_bytes("../data/input/your_document.pdf")
 ```
 
 ### Configuration

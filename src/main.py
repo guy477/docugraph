@@ -41,14 +41,14 @@ async def main(pdf_bytes: bytes):
         logger.debug(f"Reconstructed Text:\n{reconstructed_text}")
 
     visualizer = GraphVisualizer(index_to_node, len(tokens))
-    visualizer.visualize('../output/graph_visualization.png')
+    visualizer.visualize('../data/output/graph_visualization.png')
 
 # Example usage
 if __name__ == "__main__":
     # Load your PDF bytes here
     # For demonstration, we will assume pdf_bytes is available
     # Replace 'path_to_pdf' with your actual PDF file path
-    pdf_bytes = load_pdf_bytes("../data/resume_sample.pdf")
+    pdf_bytes = load_pdf_bytes("../data/input/resume_sample.pdf")
 
     # Since we cannot actually call the OpenAI API in this environment,
     # and we're simulating embeddings, the code execution is illustrative only.
