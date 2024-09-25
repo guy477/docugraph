@@ -1,3 +1,6 @@
 # ignore all __pycache__ folders
 __pycache__/
-
+too_big_for_git*
+examples/data/nvda-20240728.pdf
+examples/data/fahrenheit_451.pdf
+.DS_Store

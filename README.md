@@ -70,8 +70,8 @@ pdf_bytes = load_pdf_bytes("../data/your_document.pdf")
 Adjust processing parameters by modifying `src/_util/_config.py`:
 
 ```python
-SIMILARITY_THRESHOLD = 0.8  # Cosine similarity threshold for embeddings
-WHITESPACE_THRESHOLD = 0.8  # Threshold for whitespace node detection
+SIMILARITY_THRESHOLD = 0.82  # Cosine similarity threshold for embeddings
+WHITESPACE_THRESHOLD = 0.6  # Threshold for whitespace node detection
 ```
 
 ## Project Structure
@@ -107,10 +107,13 @@ docugraph/
 After setting up, run the program to generate a graph visualization of your PDF:
 
 ```bash
-python src/main.py
+cd src
+python main.py
 ```
 
 The visualization will be saved in the `output/` directory as `graph_visualization.png`.
 
 Edge weights between two nodes represent the frequency we move from one node to the next.
-![Semantic Graph](output/graph_visualization.png)
+![see `examples/data/poem.pdf`](examples/outputs/graph_visualization_poem.png)
+![see `examples/data/resume.pdf`](examples/outputs/graph_visualization_resume.png)
+`I've also visualized Fahrenheit 451 and some Q-10 filings, but the charts are too big for github`
