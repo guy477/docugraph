@@ -2,7 +2,7 @@
 
 ## Overview
 
-**DocuGraph** is a simple Python tool I built in a day to explore and visualize the relationships within PDF documents. It converts text from PDFs into embeddings, creates a similarity-based graph, and visualizes the connections between different text segments. It's a fun side project that showcases how text can be represented and analyzed using basic natural language processing techniques.
+**DocuGraph** is a simple Python tool to explore and visualize the relationships within PDF documents. It extracts text from PDFs, tokenizes the text, generates embeddings, and then linearly steps over these tokens in the order they appear in the document to create a similarity-based directed graph with relationships based on the embedding similarity of these tokens.
 
 ## Features
 
@@ -11,13 +11,11 @@
 - **Graph Construction**: Builds a graph based on text similarity.
 - **Visualization**: Generates visual representations of the text relationships.
 
+### Limitations
+
+- **No Graph Re-balancing**: The current implementation selects node embeddings on a first-come, first-serve basis. This means that nodes are not chosen as centroids or optimized points but are arbitrarily selected based on their distinctiveness at the time of insertion. As a result, some node embeddings may have stronger relationships with certain existing nodes in the graph at the end of the construction process.
+
 ## Installation
-
-### Prerequisites
-
-- **Python 3.11** (This is the version I use.)
-- [Anaconda](https://www.anaconda.com/products/distribution) installed on your system.
-- [OpenAI API Key](https://platform.openai.com/account/api-keys)
 
 ### Setup
 
@@ -53,7 +51,7 @@
 
 ## Usage
 
-### Running the Processor
+### Running
 
 Execute the main script to analyze a PDF document:
 
@@ -93,8 +91,7 @@ docugraph/
 ├── output/
 │   └── graph_visualization.png
 ├── .gitignore
-├── README.md
-└── environment.yml
+└── README.md
 ```
 
 - **src/**: Source code directory.
@@ -105,11 +102,9 @@ docugraph/
 - **output/**: Directory where output files like graph visualizations are saved.
 - **.gitignore**: Specifies files and directories to be ignored by Git.
 - **README.md**: Project documentation.
-- **environment.yml**: Conda environment configuration file.
-
 ## Example
 
-After setting up, run the processor to generate a graph visualization of your PDF:
+After setting up, run the program to generate a graph visualization of your PDF:
 
 ```bash
 python src/main.py
@@ -117,4 +112,5 @@ python src/main.py
 
 The visualization will be saved in the `output/` directory as `graph_visualization.png`.
 
-![Semantic Graph of Resume](output/graph_visualization.png)
+Edge weights between two nodes represent the frequency we move from one node to the next.
+![Semantic Graph](output/graph_visualization.png)
