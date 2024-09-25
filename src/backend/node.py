@@ -11,6 +11,7 @@ class Node:
             token_text (str): The actual text of the token.
         """
         self.embedding = embedding  # Embedding vector (can be None for the root node)
+        self.token_text = token_text
         self.children: Dict[int, 'Node'] = {}  # Mapping from token index to child Node
         self.token_indices: List[int] = []  # List of token indices where this node occurs
         self.text_mapping: Dict[Tuple[float, ...], str] = {}  # Embedding to token text
@@ -123,18 +124,20 @@ async def construct_embedding_graph(tokens: List[str], similarity_threshold: flo
         # Convert embedding to tuple for use as a dictionary key
         embedding_key = tuple(embedding)
 
-        # Check if an embedding within the similarity threshold exists
+        # Find the node with the closest embedding above the similarity threshold
         similar_node = None
+        max_similarity = similarity_threshold  # Initialize with threshold
+
         for existing_embedding_key, existing_node in embedding_to_node.items():
             existing_embedding = np.array(existing_embedding_key)
             similarity = cosine_similarity(
                 embedding.reshape(1, -1),
                 existing_embedding.reshape(1, -1)
             )[0][0]
-            if similarity >= similarity_threshold:
+            if similarity >= similarity_threshold and similarity > max_similarity:
                 similar_node = existing_node
-                logger.debug(f"Found similar node for token '{token}' with similarity {similarity}")
-                break
+                max_similarity = similarity
+                logger.debug(f"Found closer node for token '{token}' with similarity {similarity}")
 
         if similar_node:
             # Update the similar node

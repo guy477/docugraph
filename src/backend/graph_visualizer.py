@@ -12,10 +12,10 @@ class GraphVisualizer:
         """
         self.index_to_nodes = index_to_node
         self.num_tokens = num_tokens
-        self.graph = nx.Graph()  # Changed to undirected graph to prevent overlapping edges
+        self.graph = nx.DiGraph()  # Directed graph
         self.node_counter = 0  # Counter to assign unique IDs to node instances
         self.node_to_id: Dict[Node, int] = {}  # Maps Node instances to unique IDs
-        self.edge_weights: Dict[frozenset, int] = {}  # Uses frozenset to handle undirected edges
+        self.edge_weights: Dict[Tuple[int, int], int] = {}  # Directed edges
         self.visited_pairs: Set[Tuple[int, int]] = set()  # Tracks visited (parent_id, current_id) pairs
         self.visited: Set[int] = set()  # Tracks visited node IDs
 
@@ -73,7 +73,7 @@ class GraphVisualizer:
             from_id (int): The ID of the source node.
             to_id (int): The ID of the target node.
         """
-        edge = frozenset({from_id, to_id})
+        edge = (from_id, to_id)
         if edge in self.edge_weights:
             self.edge_weights[edge] += 1
         else:
@@ -97,19 +97,20 @@ class GraphVisualizer:
 
         node_colors = ['lightblue' for _ in self.graph.nodes()]
 
-        plt.figure(figsize=(30, 30))
+        plt.figure(figsize=(18, 18))
         nx.draw(
             self.graph,
             pos,
             with_labels=True,
             labels=labels,
-            node_size=2500,
+            node_size=500,
             node_color=node_colors,
-            arrows=False,  # Removed arrows for undirected graph
-            linewidths=2,
-            font_size=18
+            edge_color='lightgray',
+            arrows=True,
+            linewidths=1.5,
+            font_size=12
         )
-        nx.draw_networkx_edge_labels(self.graph, pos, edge_labels=edge_labels, font_size=14)
+        nx.draw_networkx_edge_labels(self.graph, pos, edge_labels=edge_labels, font_size=10)
         plt.savefig(output_path, bbox_inches='tight')
         plt.close()
         logger.info(f"Graph visualization saved to {output_path}")
@@ -124,14 +125,16 @@ class GraphVisualizer:
         Returns:
             str: A string label for the node.
         """
-        token_texts = [node.index_to_text.get(idx, '') for idx in node.token_indices]
+        token_texts = list(set([node.index_to_text.get(idx, '') for idx in node.token_indices]))
         if all(re.match(r'\s+', text) for text in token_texts):
             tokens_display = 'WHITESPACE'
         else:
             tokens_display = ', '.join(token_texts[:3])
             tokens_display += '...' if len(token_texts) > 3 else ''
 
-        label = f"Tokens: {tokens_display}"
+
+
+        label = f"{node.token_text}:\n{'{'}{tokens_display}{'}'}"
         return label
 
     def _is_whitespace_node(self, node: Node) -> bool:
