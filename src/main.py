@@ -14,6 +14,7 @@ async def main(pdf_bytes: bytes):
 
     # Step 2: Tokenize the text
     tokens = tokenize_text(text)
+    tokens = tokens
     logger.debug(f"Total Tokens: {len(tokens)}")
     logger.debug(f"Tokens Sample: {tokens[:20]}...")  # Log first 20 tokens
 
@@ -25,14 +26,15 @@ async def main(pdf_bytes: bytes):
     # Step 3: Construct the embedding graph
     root_node, index_to_node = await construct_embedding_graph(tokens, SIMILARITY_THRESHOLD)
 
-    # Step 4: Reconstruct the document from the graph
-    reconstructed_text = reconstruct_document(index_to_node, len(tokens))
-    logger.debug(f"Reconstructed Text Sample: {reconstructed_text[:500]}...")  # Log first 500 characters
+    if VALIDATE_RECONSTRUCTION:
+        # Step 4: Reconstruct the document from the graph
+        reconstructed_text = reconstruct_document(index_to_node, len(tokens))
+        logger.debug(f"Reconstructed Text Sample: {reconstructed_text[:500]}...")  # Log first 500 characters
 
     # Step 5: Verify reconstruction
-    if reconstructed_text == text:
+    if VALIDATE_RECONSTRUCTION and reconstructed_text == text:
         logger.info("Document reconstruction successful and matches the original text.")
-    else:
+    elif VALIDATE_RECONSTRUCTION:
         logger.warning("Document reconstruction does not match the original text.")
         # Output differences for analysis
         logger.debug(f"Original Text:\n{text}")

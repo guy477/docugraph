@@ -23,10 +23,6 @@ class GraphVisualizer:
         """
         Build the graph representation using chronological traversal based on index_to_node,
         while avoiding whitespace nodes by maintaining the last non-whitespace node.
-
-        Args:
-            index_to_node (Dict[int, Node]): Mapping from token index to node.
-            num_tokens (int): Total number of tokens.
         """
         previous_non_whitespace_id = None
 
@@ -36,7 +32,7 @@ class GraphVisualizer:
                 logger.warning(f"No node found for token index {idx}")
                 continue
 
-            if self._is_whitespace_node(node):
+            if node.is_whitespace_node:
                 # Skip whitespace nodes
                 continue
 
@@ -44,12 +40,14 @@ class GraphVisualizer:
             self.graph.add_node(current_id, label=self._get_node_label(node))
 
             if previous_non_whitespace_id is not None:
-                self._add_or_update_edge(previous_non_whitespace_id, current_id)
+                self._accumulate_edge(previous_non_whitespace_id, current_id)
 
             previous_non_whitespace_id = current_id
 
+        self._bulk_add_edges()
         logger.info("Completed building the graph from index_to_node while avoiding whitespace nodes.")
 
+    
     def _get_or_assign_node_id(self, node: Node) -> int:
         """
         Retrieve the unique ID for a node, assigning a new one if it doesn't exist.
@@ -65,9 +63,9 @@ class GraphVisualizer:
             self.node_counter += 1
         return self.node_to_id[node]
 
-    def _add_or_update_edge(self, from_id: int, to_id: int):
+    def _accumulate_edge(self, from_id: int, to_id: int):
         """
-        Add a new edge or update the weight of an existing edge between two nodes.
+        Accumulate the edge weight between two nodes without modifying the graph directly.
 
         Args:
             from_id (int): The ID of the source node.
@@ -78,10 +76,20 @@ class GraphVisualizer:
             self.edge_weights[edge] += 1
         else:
             self.edge_weights[edge] = 1
-        self.graph.add_edge(from_id, to_id, weight=self.edge_weights[edge])
         logger.debug(
-            f"Added/Updated edge between {from_id} and {to_id} with weight {self.edge_weights[edge]}"
+            f"Accumulated edge between {from_id} and {to_id} with current weight {self.edge_weights[edge]}"
         )
+
+    def _bulk_add_edges(self):
+        """
+        Add all accumulated edges to the graph in bulk with their corresponding weights.
+        """
+        edges_to_add = [
+            (from_id, to_id, {'weight': weight})
+            for (from_id, to_id), weight in self.edge_weights.items()
+        ]
+        self.graph.add_edges_from(edges_to_add)
+        logger.info(f"Bulk added {len(edges_to_add)} edges to the graph.")
 
     def visualize(self, output_path: str):
         """
@@ -91,24 +99,28 @@ class GraphVisualizer:
             output_path (str): The file path to save the visualization.
         """
         self.build_graph()
-        pos = graphviz_layout(self.graph, prog='circo')
+        logger.info(f"Graph has {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges.")
+
+        pos = graphviz_layout(self.graph, prog='twopi')
         labels = nx.get_node_attributes(self.graph, 'label')
         edge_labels = nx.get_edge_attributes(self.graph, 'weight')
 
         node_colors = ['lightblue' for _ in self.graph.nodes()]
 
-        plt.figure(figsize=(18, 18))
+        plt.figure(figsize=(24, 24))
+
+        logger.info(f"Drawing graph....")
         nx.draw(
             self.graph,
             pos,
             with_labels=True,
             labels=labels,
-            node_size=500,
+            node_size=1000,
             node_color=node_colors,
             edge_color='lightgray',
             arrows=True,
             linewidths=1.5,
-            font_size=12
+            font_size=10
         )
         nx.draw_networkx_edge_labels(self.graph, pos, edge_labels=edge_labels, font_size=10)
         plt.savefig(output_path, bbox_inches='tight')
@@ -126,7 +138,7 @@ class GraphVisualizer:
             str: A string label for the node.
         """
         token_texts = list(set([node.index_to_text.get(idx, '') for idx in node.token_indices]))
-        if all(re.match(r'\s+', text) for text in token_texts):
+        if all(text.isspace() for text in token_texts):
             tokens_display = 'WHITESPACE'
         else:
             tokens_display = ', '.join(token_texts[:3])
@@ -136,26 +148,3 @@ class GraphVisualizer:
 
         label = f"{node.token_text}:\n{'{'}{tokens_display}{'}'}"
         return label
-
-    def _is_whitespace_node(self, node: Node) -> bool:
-        """
-        Determine if a node is a whitespace node based on a threshold percentage.
-
-        Args:
-            node (Node): The node to check.
-            threshold (float, optional): The percentage of whitespace required to return True. Default is 90%.
-
-        Returns:
-            bool: True if the percentage of whitespace exceeds the threshold, False otherwise.
-        """
-        matches = [bool(re.match(r'^\s+$', text)) for text in node.index_to_text.values()]
-        true_count = sum(matches)
-        total_count = len(matches)
-
-        if total_count == 0:
-            return False
-
-        whitespace_prob = true_count / total_count
-        logger.debug(f"Whitespace probability for node {node}: {whitespace_prob}")
-
-        return whitespace_prob >= WHITESPACE_THRESHOLD

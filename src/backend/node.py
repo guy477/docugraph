@@ -18,15 +18,48 @@ class Node:
         self.index_to_text: Dict[int, str] = {}  # Mapping from token index to token text
         self.parent: Optional['Node'] = None  # Reference to the parent Node
 
+        # Attributes to track whitespace ratio
+        self._total_tokens: int = 0
+        self._whitespace_tokens: int = 0
+        self.is_whitespace_node: bool = False  # Initialized based on ratio
+
         if embedding is not None:
             embedding_key = tuple(embedding)
-            self.token_indices.append(token_index)
-            self.text_mapping[embedding_key] = token_text
-            self.index_to_text[token_index] = token_text
+            self.add_token(token_index, token_text, embedding_key)
             logger.debug(f"Created Node: Token '{token_text}', Index {token_index}")
         else:
             # Handle the root node case where embedding is None
             logger.debug("Created Root Node")
+
+    def add_token(self, token_index: int, token_text: str, embedding_key: Tuple[float, ...]):
+        """
+        Add a token to the node and update whitespace tracking.
+
+        Args:
+            token_index (int): The index of the token in the document.
+            token_text (str): The text of the token.
+            embedding_key (Tuple[float, ...]): The embedding key for the token.
+        """
+        self.token_indices.append(token_index)
+        self.text_mapping[embedding_key] = token_text
+        self.index_to_text[token_index] = token_text
+        self._total_tokens += 1
+        if token_text.isspace():
+            self._whitespace_tokens += 1
+        self._update_whitespace_flag()
+        logger.debug(f"Added token '{token_text}' at index {token_index}. "
+                     f"Whitelist tokens: {self._whitespace_tokens}/{self._total_tokens}. "
+                     f"Is whitespace node: {self.is_whitespace_node}")
+
+    def _update_whitespace_flag(self):
+        """
+        Update the is_whitespace_node flag based on the current whitespace ratio.
+        """
+        if self._total_tokens == 0:
+            self.is_whitespace_node = False
+        else:
+            whitespace_ratio = self._whitespace_tokens / self._total_tokens
+            self.is_whitespace_node = whitespace_ratio >= WHITESPACE_THRESHOLD
 
     def add_child(self, token_index: int, child_node: 'Node'):
         """
@@ -42,16 +75,6 @@ class Node:
         child_node.parent = self
         logger.debug(f"Added child node at index {token_index} to node with indices {self.token_indices}")
 
-    def update_embedding(self, new_embedding: np.ndarray):
-        """
-        Update the node's embedding.
-
-        Args:
-            new_embedding (np.ndarray): The new embedding vector.
-        """
-        self.embedding = new_embedding
-        logger.debug("Node embedding updated.")
-
     def get_text(self, token_index: int) -> str:
         """
         Retrieve the text associated with the node's embedding at a specific token index.
@@ -66,7 +89,7 @@ class Node:
 
     def merge_with(self, other_node: 'Node'):
         """
-        Merge another node into this node.
+        (UNTESTED) Merge another node into this node. 
 
         Args:
             other_node (Node): The node to merge with.
@@ -76,6 +99,10 @@ class Node:
         # Merge text mappings
         self.text_mapping.update(other_node.text_mapping)
         self.index_to_text.update(other_node.index_to_text)
+        # Merge whitespace tracking
+        self._total_tokens += other_node._total_tokens
+        self._whitespace_tokens += other_node._whitespace_tokens
+        self._update_whitespace_flag()
         # Merge children
         for idx, child in other_node.children.items():
             if idx not in self.children:
@@ -84,24 +111,27 @@ class Node:
             else:
                 # If the child already exists, decide on a merging strategy
                 self.children[idx].merge_with(child)
-        logger.debug(f"Merged node with token indices {other_node.token_indices} into node with indices {self.token_indices}")
+        logger.debug(f"Merged node with token indices {other_node.token_indices} into node with indices {self.token_indices}. "
+                     f"Is whitespace node: {self.is_whitespace_node}")
 
     def __repr__(self):
-        return f"Node(token_indices={self.token_indices}, num_children={len(self.children)})"
-    
+        return (f"Node(token_indices={self.token_indices}, num_children={len(self.children)}, "
+                f"is_whitespace={self.is_whitespace_node})")
+
 
 #_____________________________________________________________________________________#
 #_____________________________ HELPER FUNCTIONS ______________________________________#
 #_____________________________________________________________________________________#
-# Main function to construct the data structure
+
+
 async def construct_embedding_graph(tokens: List[str], similarity_threshold: float) -> Tuple[Node, Dict[int, Node]]:
     """
-    Construct the graph-like data structure from tokens.
-
+    Optimized construction of the embedding graph using vectorized cosine similarity.
+    
     Args:
         tokens (List[str]): List of tokens from the document.
         similarity_threshold (float): Threshold for cosine similarity.
-
+    
     Returns:
         Tuple[Node, Dict[int, Node]]: The root node and index-to-node mapping.
     """
@@ -109,59 +139,68 @@ async def construct_embedding_graph(tokens: List[str], similarity_threshold: flo
     embeddings = await get_embeddings(tokens)
     if embeddings.size == 0:
         raise ValueError("Embeddings could not be generated.")
-
+    
+    # Normalize all embeddings to unit vectors to simplify cosine similarity to dot product
+    normalized_embeddings = normalize(embeddings, axis=1)
+    
     # Initialize root node (empty embedding)
     root = Node(embedding=None, token_index=-1, token_text="")
     prior_node = root
-
-    # Keep a mapping from embeddings to nodes for quick similarity search
-    embedding_to_node: Dict[Tuple[float, ...], Node] = {}
+    
+    # Lists to store normalized embeddings and corresponding nodes
+    embedding_list = []  # List of normalized embeddings (numpy arrays)
+    node_list = []       # List of Node objects corresponding to embeddings_list
+    
+    # Mapping from token index to node
     index_to_node: Dict[int, Node] = {}
-
-    for idx, (token, embedding) in enumerate(zip(tokens, embeddings)):
+    
+    for idx, (token, norm_emb) in tqdm(enumerate(zip(tokens, normalized_embeddings)), desc="Processing tokens", total=len(tokens)):
         logger.debug(f"Processing token {idx}: '{token}'")
-
-        # Convert embedding to tuple for use as a dictionary key
-        embedding_key = tuple(embedding)
-
-        # Find the node with the closest embedding above the similarity threshold
-        similar_node = None
-        max_similarity = similarity_threshold  # Initialize with threshold
-
-        for existing_embedding_key, existing_node in embedding_to_node.items():
-            existing_embedding = np.array(existing_embedding_key)
-            similarity = cosine_similarity(
-                embedding.reshape(1, -1),
-                existing_embedding.reshape(1, -1)
-            )[0][0]
-            if similarity >= similarity_threshold and similarity > max_similarity:
-                similar_node = existing_node
-                max_similarity = similarity
-                logger.debug(f"Found closer node for token '{token}' with similarity {similarity}")
-
+        
+        if embedding_list:
+            # Stack existing normalized embeddings into a 2D array for vectorized operations
+            existing_embeddings = np.vstack(embedding_list)  # Shape: (N, D)
+            
+            # Compute cosine similarities using dot product since embeddings are normalized
+            similarities = existing_embeddings @ norm_emb  # Shape: (N,)
+            
+            # Find indices where similarity meets or exceeds the threshold
+            valid_indices = np.where(similarities >= similarity_threshold)[0]
+            
+            if valid_indices.size > 0:
+                # Select the index with the highest similarity
+                max_sim_idx = valid_indices[np.argmax(similarities[valid_indices])]
+                similar_node = node_list[max_sim_idx]
+                logger.debug(f"Found similar node for token '{token}' with similarity {similarities[max_sim_idx]:.4f}")
+            else:
+                similar_node = None
+        else:
+            similar_node = None
+        
         if similar_node:
-            # Update the similar node
-            similar_node.token_indices.append(idx)
-            similar_node.text_mapping[embedding_key] = token
-            similar_node.index_to_text[idx] = token
+            # Reuse the similar node
+            similar_node.add_token(idx, token, tuple(embeddings[idx]))
             current_node = similar_node
             logger.debug(f"Reusing node for token '{token}', indices now: {similar_node.token_indices}")
         else:
             # Create a new node
-            current_node = Node(embedding=embedding, token_index=idx, token_text=token)
-            embedding_to_node[embedding_key] = current_node
+            current_node = Node(embedding=embeddings[idx], token_index=idx, token_text=token)
+            embedding_list.append(norm_emb)  # Store normalized embedding
+            node_list.append(current_node)
             logger.debug(f"Created new node for token '{token}' at index {idx}")
-
+        
+        # Map the current token index to the current node
         index_to_node[idx] = current_node
-
+        
         # Add the current node as a child of the prior node
         prior_node.add_child(idx, current_node)
-
+        
         # Move to the next node
         prior_node = current_node
-
+    
     logger.info("Completed constructing the embedding graph.")
     return root, index_to_node
+
 
 # Function to reconstruct the document from the graph
 def reconstruct_document(index_to_node: Dict[int, Node], num_tokens: int) -> str:
@@ -179,7 +218,7 @@ def reconstruct_document(index_to_node: Dict[int, Node], num_tokens: int) -> str
     for idx in range(num_tokens):
         node = index_to_node.get(idx)
         if node:
-            token_text = node.index_to_text.get(idx, "")
+            token_text = node.get_text(idx)
             reconstructed_tokens.append(token_text)
             logger.debug(f"Token index {idx}: '{token_text}'")
         else:

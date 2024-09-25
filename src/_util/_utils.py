@@ -8,8 +8,10 @@ from openai import OpenAI
 import os
 from sklearn.metrics.pairwise import cosine_similarity
 from matplotlib import pyplot as plt
+from sklearn.preprocessing import normalize
 import networkx as nx
 import re
+from tqdm import tqdm
 from networkx.drawing.nx_agraph import graphviz_layout
 
 
@@ -28,31 +30,41 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Function to generate embeddings asynchronously
 async def get_embeddings(text_list: List[str]) -> np.ndarray:
     """
-    Generate embeddings for a list of texts using OpenAI API.
+    Generate embeddings for a list of texts using OpenAI API, optimizing by removing duplicates.
 
     Args:
         text_list (List[str]): List of text strings to embed.
 
     Returns:
-        np.ndarray: Array of embeddings.
+        np.ndarray: Array of embeddings corresponding to the original text_list order.
     """
     logger.info("get_embeddings called with %d texts", len(text_list))
     try:
-        embeddings = []
-        # OpenAI's API supports batching; we can process multiple texts at once
-        batch_size = 50  # Adjust based on API limits and performance
-        for i in range(0, len(text_list), batch_size):
-            batch = text_list[i:i + batch_size]
-            logger.debug("Generating embeddings for batch %d to %d", i, i + len(batch))
-            # Simulated response for demonstration purposes
-            # Uncomment the following lines when using the actual OpenAI API
+        # Remove duplicates while preserving order
+        unique_texts = []
+        seen_texts = set()
+        for text in text_list:
+            if text not in seen_texts:
+                seen_texts.add(text)
+                unique_texts.append(text)
+        
+        text_to_embedding = {}
+        batch_size = 2048  # Adjust based on API limits and performance
+
+        for i in tqdm(range(0, len(unique_texts), batch_size), desc="Generating embeddings"):
+            batch = unique_texts[i:i + batch_size]
+            logger.debug("Generating embeddings for unique batch %d to %d", i, i + len(batch))
             response = client.embeddings.create(
                 input=batch,
-                model="text-embedding-ada-002"  # Example model name
+                model="text-embedding-ada-002"
             ).to_dict()
             batch_embeddings = [np.array(data['embedding']) for data in response['data']]
-            embeddings.extend(batch_embeddings)
-        logger.info("get_embeddings completed successfully")
+            for text, embedding in zip(batch, batch_embeddings):
+                text_to_embedding[text] = embedding
+
+        # Map embeddings back to the original text_list order
+        embeddings = [text_to_embedding[text] for text in text_list]
+        logger.info("get_embeddings completed successfully with optimized API calls")
         return np.array(embeddings)
     except Exception as e:
         logger.error("Error during embedding call: %s", str(e), exc_info=True)
