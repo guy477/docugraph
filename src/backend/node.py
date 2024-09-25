@@ -51,6 +51,28 @@ class Node:
                      f"Whitelist tokens: {self._whitespace_tokens}/{self._total_tokens}. "
                      f"Is whitespace node: {self.is_whitespace_node}")
 
+    def remove_token(self, token_index: int, embedding_key: Tuple[float, ...]):
+        """
+        Remove a token from the node.
+
+        Args:
+            token_index (int): The index of the token to remove.
+            embedding_key (Tuple[float, ...]): The embedding key of the token.
+        """
+        if token_index in self.token_indices:
+            self.token_indices.remove(token_index)
+            del self.index_to_text[token_index]
+            del self.text_mapping[embedding_key]
+            self._total_tokens -= 1
+            # Assuming token_text is available
+            token_text = self.index_to_text.get(token_index, "")
+            if token_text.isspace():
+                self._whitespace_tokens -= 1
+            self._update_whitespace_flag()
+            logger.debug(f"Removed token '{token_text}' from Node {self}.")
+        else:
+            logger.warning(f"Token index {token_index} not found in Node {self}.")
+
     def _update_whitespace_flag(self):
         """
         Update the is_whitespace_node flag based on the current whitespace ratio.
@@ -119,18 +141,183 @@ class Node:
                 f"is_whitespace={self.is_whitespace_node})")
 
 
+class Rebalancer:
+    """
+    Handles the rebalancing of the embedding graph by migrating tokens
+    to more appropriate nodes based on embedding similarity.
+    """
+
+    def __init__(self, root: Node, index_to_node: Dict[int, Node]):
+        """
+        Initialize the Rebalancer.
+
+        Args:
+            root (Node): The root node of the embedding graph.
+            index_to_node (Dict[int, Node]): Mapping from token index to node.
+        """
+        self.root = root
+        self.index_to_node = index_to_node
+        self.embedding_cache: Dict[Tuple[float, ...], Node] = {}
+
+    def rebalance_graph(self):
+        """
+        Rebalance the entire embedding graph by reassigning tokens to the most suitable nodes.
+        """
+        logger.info("Starting graph rebalancing.")
+        tokens = self._gather_all_tokens()
+        for token_index, token_text, embedding in tqdm(tokens, desc="Rebalancing graph"):
+            self._process_token(token_index, token_text, embedding)
+        logger.info("Completed graph rebalancing.")
+
+    def _gather_all_tokens(self) -> List[Tuple[int, str, Tuple[float, ...]]]:
+        """
+        Gather all tokens from all nodes in the graph.
+
+        Returns:
+            List[Tuple[int, str, Tuple[float, ...]]]: A list of tuples containing token index, text, and embedding.
+        """
+        tokens = []
+        for node in set(self.index_to_node.values()): # order shouldn't matter
+            for idx in node.token_indices:
+                token_text = node.get_text(idx)
+                embedding = node.text_mapping.get(tuple(node.embedding), "")
+                if embedding:
+                    tokens.append((idx, token_text, tuple(node.embedding)))
+        logger.debug(f"Gathered {len(tokens)} tokens for rebalancing.")
+        return tokens
+
+    def _process_token(self, token_index: int, token_text: str, embedding: Tuple[float, ...]):
+        """
+        Process a single token by determining if it should be moved to a better node.
+
+        Args:
+            token_index (int): The index of the token.
+            token_text (str): The text of the token.
+            embedding (Tuple[float, ...]): The embedding vector of the token.
+        """
+        current_node = self.index_to_node.get(token_index)
+        if not current_node:
+            logger.warning(f"No current node found for token index {token_index}. Skipping.")
+            return
+
+        best_node = self._find_best_node(embedding)
+
+        if best_node and best_node != current_node:
+            logger.info(f"Token '{token_text}' at index {token_index} will be moved from Node {current_node} to Node {best_node}.")
+            self._migrate_token(token_index, token_text, embedding, current_node, best_node)
+        else:
+            logger.debug(f"Token '{token_text}' at index {token_index} remains in Node {current_node}.")
+
+    def _find_best_node(self, embedding: Tuple[float, ...]) -> Optional[Node]:
+        """
+        Find the best node for a given embedding based on the similarity threshold.
+
+        Args:
+            embedding (Tuple[float, ...]): The embedding vector to find a node for.
+
+        Returns:
+            Optional[Node]: The best matching node or None if no suitable node is found.
+        """
+        if embedding in self.embedding_cache:
+            logger.debug("Cache hit for embedding.")
+            return self.embedding_cache[embedding]
+
+        best_similarity = -1.0
+        best_node = None
+        for node in self.index_to_node.values():
+            if node.embedding is None:
+                continue  # Skip root node
+            similarity = self._compute_similarity(embedding, tuple(node.embedding))
+            if similarity > best_similarity and similarity >= SIMILARITY_THRESHOLD:
+                best_similarity = similarity
+                best_node = node
+
+        if best_node:
+            self.embedding_cache[embedding] = best_node
+            logger.debug(f"Best node found with similarity {best_similarity:.4f}.")
+        else:
+            logger.debug("No suitable best node found.")
+
+        return best_node
+
+    def _compute_similarity(self, emb1: Tuple[float, ...], emb2: Tuple[float, ...]) -> float:
+        """
+        Compute the cosine similarity between two embeddings.
+
+        Args:
+            emb1 (Tuple[float, ...]): The first embedding vector.
+            emb2 (Tuple[float, ...]): The second embedding vector.
+
+        Returns:
+            float: The cosine similarity.
+        """
+        vec1 = np.array(emb1)
+        vec2 = np.array(emb2)
+        similarity = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+        return similarity
+
+    def _migrate_token(self, token_index: int, token_text: str, embedding: Tuple[float, ...],
+                       current_node: Node, best_node: Node):
+        """
+        Migrate a token from the current node to the best node.
+
+        Args:
+            token_index (int): The index of the token.
+            token_text (str): The text of the token.
+            embedding (Tuple[float, ...]): The embedding vector of the token.
+            current_node (Node): The node from which the token is being migrated.
+            best_node (Node): The node to which the token is being migrated.
+        """
+        # Remove token from current node
+        current_node.token_indices.remove(token_index)
+        del current_node.index_to_text[token_index]
+        del current_node.text_mapping[embedding]
+        current_node._total_tokens -= 1
+        if token_text.isspace():
+            current_node._whitespace_tokens -= 1
+        current_node._update_whitespace_flag()
+
+        # Add token to best node
+        best_node.add_token(token_index, token_text, embedding)
+
+        # Update the index_to_node mapping
+        self.index_to_node[token_index] = best_node
+
+        logger.debug(f"Migrated token index {token_index} to Node {best_node}.")
+
 #_____________________________________________________________________________________#
 #_____________________________ HELPER FUNCTIONS ______________________________________#
 #_____________________________________________________________________________________#
 
+async def build_and_rebalance_graph(tokens: List[str]) -> Tuple[Node, Dict[int, Node]]:
+    """
+    Constructs the embedding graph and then rebalances it.
 
-async def construct_embedding_graph(tokens: List[str], similarity_threshold: float) -> Tuple[Node, Dict[int, Node]]:
+    Args:
+        tokens (List[str]): List of tokens from the document.
+
+    Returns:
+        Tuple[Node, Dict[int, Node]]: The root node and index-to-node mapping.
+    """
+    root, index_to_node = await construct_embedding_graph(tokens)
+    
+    # Initialize the Rebalancer
+    rebalancer = Rebalancer(root, index_to_node)
+    
+    # Perform rebalancing
+    # NOTE: From experimentation, rebalancing is a no-op.
+    #  This suggests every token is assigned to the best node.
+    #  After construction.
+    rebalancer.rebalance_graph()
+    
+    return root, index_to_node
+
+async def construct_embedding_graph(tokens: List[str]) -> Tuple[Node, Dict[int, Node]]:
     """
     Optimized construction of the embedding graph using vectorized cosine similarity.
     
     Args:
         tokens (List[str]): List of tokens from the document.
-        similarity_threshold (float): Threshold for cosine similarity.
     
     Returns:
         Tuple[Node, Dict[int, Node]]: The root node and index-to-node mapping.
@@ -165,7 +352,7 @@ async def construct_embedding_graph(tokens: List[str], similarity_threshold: flo
             similarities = existing_embeddings @ norm_emb  # Shape: (N,)
             
             # Find indices where similarity meets or exceeds the threshold
-            valid_indices = np.where(similarities >= similarity_threshold)[0]
+            valid_indices = np.where(similarities >= SIMILARITY_THRESHOLD)[0]
             
             if valid_indices.size > 0:
                 # Select the index with the highest similarity

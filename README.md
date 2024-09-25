@@ -7,13 +7,13 @@
 ## Features
 
 - **PDF Parsing**: Extracts text from PDF files.
-- **Text Embedding**: Converts text into numerical embeddings.
-- **Graph Construction**: Builds a graph based on text similarity.
+- **Text Embedding**: Converts text into vector embeddings.
+- **Graph Construction**: Builds a graph based on text similarity. Graph construction assumptions ensure every token in the document is assigned to its most similar node after the first pass.
 - **Visualization**: Generates visual representations of the text relationships.
 
 ### Limitations
 
-- **No Graph Re-balancing**: The current implementation selects node embeddings on a first-come, first-serve basis. This means that nodes are not chosen as centroids or optimized points but are arbitrarily selected based on their distinctiveness at the time of insertion. As a result, some node embeddings may have stronger relationships with certain existing nodes in the graph at the end of the construction process.
+- **No Graph Re-balancing**: The current implementation selects node embeddings on a first-come, first-serve basis. This means that nodes are not chosen as centroids or optimized clusters but are arbitrarily selected based on their distinctiveness at the time of insertion. Regardless, every token is assigned to the best node available in the graph upon construction.
 
 ## Installation
 

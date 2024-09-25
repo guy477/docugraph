@@ -24,7 +24,8 @@ async def main(pdf_bytes: bytes):
         return
 
     # Step 3: Construct the embedding graph
-    root_node, index_to_node = await construct_embedding_graph(tokens, SIMILARITY_THRESHOLD)
+    # root_node, index_to_node = await construct_embedding_graph(tokens, SIMILARITY_THRESHOLD)
+    root, index_to_node = await build_and_rebalance_graph(tokens)
 
     if VALIDATE_RECONSTRUCTION:
         # Step 4: Reconstruct the document from the graph
@@ -48,7 +49,7 @@ if __name__ == "__main__":
     # Load your PDF bytes here
     # For demonstration, we will assume pdf_bytes is available
     # Replace 'path_to_pdf' with your actual PDF file path
-    pdf_bytes = load_pdf_bytes("../data/input/resume_sample.pdf")
+    pdf_bytes = load_pdf_bytes("../data/input/poem.pdf")
 
     # Since we cannot actually call the OpenAI API in this environment,
     # and we're simulating embeddings, the code execution is illustrative only.
