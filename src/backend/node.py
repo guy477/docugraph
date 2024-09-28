@@ -1,5 +1,7 @@
 from _util._utils import *
 
+import faiss
+
 class Node:
     def __init__(self, embedding: Optional[np.ndarray], token_index: int, token_text: str):
         """
@@ -16,12 +18,12 @@ class Node:
         self.token_indices: List[int] = []  # List of token indices where this node occurs
         self.text_mapping: Dict[Tuple[float, ...], str] = {}  # Embedding to token text
         self.index_to_text: Dict[int, str] = {}  # Mapping from token index to token text
-        self.parent: Optional['Node'] = None  # Reference to the parent Node
 
-        # Attributes to track whitespace ratio
+        # Attributes to track whitespace and numeric ratios
         self._total_tokens: int = 0
         self._whitespace_tokens: int = 0
-        self.is_whitespace_node: bool = False  # Initialized based on ratio
+        self._numeric_tokens: int = 0
+        self.is_ignorable_node: bool = False  # Initialized based on ratios
 
         if embedding is not None:
             embedding_key = tuple(embedding)
@@ -33,7 +35,7 @@ class Node:
 
     def add_token(self, token_index: int, token_text: str, embedding_key: Tuple[float, ...]):
         """
-        Add a token to the node and update whitespace tracking.
+        Add a token to the node and update whitespace and numeric tracking.
 
         Args:
             token_index (int): The index of the token in the document.
@@ -46,10 +48,13 @@ class Node:
         self._total_tokens += 1
         if token_text.isspace():
             self._whitespace_tokens += 1
-        self._update_whitespace_flag()
+        if any(char.isdigit() for char in token_text):
+            self._numeric_tokens += 1
+        self._update_ignorable_flag()
         logger.debug(f"Added token '{token_text}' at index {token_index}. "
-                     f"Whitelist tokens: {self._whitespace_tokens}/{self._total_tokens}. "
-                     f"Is whitespace node: {self.is_whitespace_node}")
+                        f"Whitespace tokens: {self._whitespace_tokens}/{self._total_tokens}. "
+                        f"Numeric tokens: {self._numeric_tokens}/{self._total_tokens}. "
+                        f"Is ignorable node: {self.is_ignorable_node}")
 
     def remove_token(self, token_index: int, embedding_key: Tuple[float, ...]):
         """
@@ -68,20 +73,23 @@ class Node:
             token_text = self.index_to_text.get(token_index, "")
             if token_text.isspace():
                 self._whitespace_tokens -= 1
-            self._update_whitespace_flag()
+            if any(char.isdigit() for char in token_text):
+                self._numeric_tokens -= 1
+            self._update_ignorable_flag()
             logger.debug(f"Removed token '{token_text}' from Node {self}.")
         else:
             logger.warning(f"Token index {token_index} not found in Node {self}.")
 
-    def _update_whitespace_flag(self):
+    def _update_ignorable_flag(self):
         """
-        Update the is_whitespace_node flag based on the current whitespace ratio.
+        Update the is_ignorable_node flag based on the current whitespace and numeric ratios.
         """
         if self._total_tokens == 0:
-            self.is_whitespace_node = False
+            self.is_ignorable_node = False
         else:
             whitespace_ratio = self._whitespace_tokens / self._total_tokens
-            self.is_whitespace_node = whitespace_ratio >= WHITESPACE_THRESHOLD
+            numeric_ratio = self._numeric_tokens / self._total_tokens
+            self.is_ignorable_node = whitespace_ratio >= WHITESPACE_THRESHOLD or numeric_ratio >= WHITESPACE_THRESHOLD
 
     def add_child(self, token_index: int, child_node: 'Node'):
         """
@@ -94,7 +102,6 @@ class Node:
         if token_index in self.children:
             logger.debug(f"Child at index {token_index} already exists. Overwriting.")
         self.children[token_index] = child_node
-        child_node.parent = self
         logger.debug(f"Added child node at index {token_index} to node with indices {self.token_indices}")
 
     def get_text(self, token_index: int) -> str:
@@ -121,24 +128,24 @@ class Node:
         # Merge text mappings
         self.text_mapping.update(other_node.text_mapping)
         self.index_to_text.update(other_node.index_to_text)
-        # Merge whitespace tracking
+        # Merge whitespace and numeric tracking
         self._total_tokens += other_node._total_tokens
         self._whitespace_tokens += other_node._whitespace_tokens
-        self._update_whitespace_flag()
+        self._numeric_tokens += other_node._numeric_tokens
+        self._update_ignorable_flag()
         # Merge children
         for idx, child in other_node.children.items():
             if idx not in self.children:
                 self.children[idx] = child
-                child.parent = self
             else:
                 # If the child already exists, decide on a merging strategy
                 self.children[idx].merge_with(child)
         logger.debug(f"Merged node with token indices {other_node.token_indices} into node with indices {self.token_indices}. "
-                     f"Is whitespace node: {self.is_whitespace_node}")
+                     f"Is ignorable node: {self.is_ignorable_node}")
 
     def __repr__(self):
         return (f"Node(token_indices={self.token_indices}, num_children={len(self.children)}, "
-                f"is_whitespace={self.is_whitespace_node})")
+                f"is_ignorable={self.is_ignorable_node})")
 
 
 class Rebalancer:
@@ -164,10 +171,12 @@ class Rebalancer:
         Rebalance the entire embedding graph by reassigning tokens to the most suitable nodes.
         """
         logger.info("Starting graph rebalancing.")
+        num_migrations = 0
         tokens = self._gather_all_tokens()
         for token_index, token_text, embedding in tqdm(tokens, desc="Rebalancing graph"):
-            self._process_token(token_index, token_text, embedding)
-        logger.info("Completed graph rebalancing.")
+            num_migrations += self._process_token(token_index, token_text, embedding)
+
+        logger.info(f"Completed graph rebalancing with {num_migrations} tokens migrated.")
 
     def _gather_all_tokens(self) -> List[Tuple[int, str, Tuple[float, ...]]]:
         """
@@ -201,13 +210,15 @@ class Rebalancer:
             return
 
         best_node = self._find_best_node(embedding)
-
+        total_migrations = 0
         if best_node and best_node != current_node:
             logger.info(f"Token '{token_text}' at index {token_index} will be moved from Node {current_node} to Node {best_node}.")
             self._migrate_token(token_index, token_text, embedding, current_node, best_node)
+            total_migrations += 1
         else:
             logger.debug(f"Token '{token_text}' at index {token_index} remains in Node {current_node}.")
 
+        return total_migrations
     def _find_best_node(self, embedding: Tuple[float, ...]) -> Optional[Node]:
         """
         Find the best node for a given embedding based on the similarity threshold.
@@ -307,14 +318,15 @@ async def build_and_rebalance_graph(tokens: List[str]) -> Tuple[Node, Dict[int, 
     # Perform rebalancing
     # NOTE: From experimentation, rebalancing is a no-op.
     #  This suggests every token is assigned to the best node.
-    #  After construction.
-    rebalancer.rebalance_graph()
+    #  After construction. It's also really slow. Leave commented.
+    # rebalancer.rebalance_graph()
     
     return root, index_to_node
 
+
 async def construct_embedding_graph(tokens: List[str]) -> Tuple[Node, Dict[int, Node]]:
     """
-    Optimized construction of the embedding graph using vectorized cosine similarity.
+    Optimized construction of the embedding graph using FAISS for fast similarity search.
     
     Args:
         tokens (List[str]): List of tokens from the document.
@@ -328,37 +340,37 @@ async def construct_embedding_graph(tokens: List[str]) -> Tuple[Node, Dict[int, 
         raise ValueError("Embeddings could not be generated.")
     
     # Normalize all embeddings to unit vectors to simplify cosine similarity to dot product
-    normalized_embeddings = normalize(embeddings, axis=1)
+    normalized_embeddings = normalize(embeddings, axis=1).astype('float32')  # FAISS requires float32
+    
+    # Initialize FAISS index
+    dimension = normalized_embeddings.shape[1]
+    index = faiss.IndexFlatIP(dimension)  # Inner Product for cosine similarity
     
     # Initialize root node (empty embedding)
     root = Node(embedding=None, token_index=-1, token_text="")
     prior_node = root
     
-    # Lists to store normalized embeddings and corresponding nodes
-    embedding_list = []  # List of normalized embeddings (numpy arrays)
-    node_list = []       # List of Node objects corresponding to embeddings_list
-    
     # Mapping from token index to node
     index_to_node: Dict[int, Node] = {}
+    node_list: List[Node] = []
     
-    for idx, (token, norm_emb) in tqdm(enumerate(zip(tokens, normalized_embeddings)), desc="Processing tokens", total=len(tokens)):
+    for idx in tqdm(range(len(tokens)), desc="Processing tokens"):
+        token = tokens[idx]
+        norm_emb = normalized_embeddings[idx]
+        
         logger.debug(f"Processing token {idx}: '{token}'")
         
-        if embedding_list:
-            # Stack existing normalized embeddings into a 2D array for vectorized operations
-            existing_embeddings = np.vstack(embedding_list)  # Shape: (N, D)
+        if index.ntotal > 0:
+            # Perform a search for the most similar node
+            # Since we need the most similar node with similarity >= threshold,
+            # we search for top 1 and check the similarity
+            D, I = index.search(norm_emb.reshape(1, -1), 1)
+            max_similarity = D[0][0]
+            max_idx = I[0][0]
             
-            # Compute cosine similarities using dot product since embeddings are normalized
-            similarities = existing_embeddings @ norm_emb  # Shape: (N,)
-            
-            # Find indices where similarity meets or exceeds the threshold
-            valid_indices = np.where(similarities >= SIMILARITY_THRESHOLD)[0]
-            
-            if valid_indices.size > 0:
-                # Select the index with the highest similarity
-                max_sim_idx = valid_indices[np.argmax(similarities[valid_indices])]
-                similar_node = node_list[max_sim_idx]
-                logger.debug(f"Found similar node for token '{token}' with similarity {similarities[max_sim_idx]:.4f}")
+            if max_similarity >= SIMILARITY_THRESHOLD:
+                similar_node = node_list[max_idx]
+                logger.debug(f"Found similar node for token '{token}' with similarity {max_similarity:.4f}")
             else:
                 similar_node = None
         else:
@@ -372,8 +384,9 @@ async def construct_embedding_graph(tokens: List[str]) -> Tuple[Node, Dict[int, 
         else:
             # Create a new node
             current_node = Node(embedding=embeddings[idx], token_index=idx, token_text=token)
-            embedding_list.append(norm_emb)  # Store normalized embedding
             node_list.append(current_node)
+            # Add the normalized embedding to FAISS index
+            index.add(np.expand_dims(norm_emb, axis=0))  # FAISS expects 2D array
             logger.debug(f"Created new node for token '{token}' at index {idx}")
         
         # Map the current token index to the current node
@@ -387,6 +400,7 @@ async def construct_embedding_graph(tokens: List[str]) -> Tuple[Node, Dict[int, 
     
     logger.info("Completed constructing the embedding graph.")
     return root, index_to_node
+
 
 
 # Function to reconstruct the document from the graph

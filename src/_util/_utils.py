@@ -9,13 +9,18 @@ import os
 from sklearn.metrics.pairwise import cosine_similarity
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import normalize
-import networkx as nx
+import hashlib
+import json
 import re
 from tqdm import tqdm
+import networkx as nx
 from networkx.drawing.nx_agraph import graphviz_layout
-
+from networkx.algorithms import community
+from collections import defaultdict
+import math
 
 from _util._config import *
+
 
 
 # Configure logging
@@ -88,7 +93,7 @@ def parse_pdf_content(pdf_bytes: bytes) -> str:
             logger.info(f"Number of pages in PDF: {num_pages}")
             text = ''
             for i, page in enumerate(pdf.pages, start=1):
-                page_text = page.extract_text(layout=True)
+                page_text = page.extract_text()
                 if page_text:
                     text += page_text + '\n'  # Add space to separate pages
                     logger.debug(f"Extracted text from page {i}.")

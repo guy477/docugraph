@@ -1,6 +1,7 @@
 from _util._utils import *
 from backend.node import *
 from backend.graph_visualizer import *
+from backend.topic_extractor import *
 
 async def main(pdf_bytes: bytes):
     # Step 1: Parse PDF and extract text
@@ -41,15 +42,29 @@ async def main(pdf_bytes: bytes):
         logger.debug(f"Original Text:\n{text}")
         logger.debug(f"Reconstructed Text:\n{reconstructed_text}")
 
+    # Step 6: Extract topics
+    extractor = TopicExtractor(tokens, index_to_node, window_size=TOPIC_WINDOW_SIZE)
+    
+    # Identify topics based on graph frequency
+    topic_graphs = extractor.identify_topics()
+    
+    # Map topics to their associated tokens
+    topic_tokens = extractor.map_topics_to_tokens(topic_graphs, index_to_node)
+    
+    # Display the topics
+    for i, topic in enumerate(topic_tokens):
+        logger.info(f":: {' '.join(topic)}")
+
+    # Step 7: Visualize the graph
     visualizer = GraphVisualizer(index_to_node, len(tokens))
-    visualizer.visualize('../data/output/graph_visualization.png')
+    visualizer.visualize(CHART_SAVE_PATH + '/graph_visualization.png')
 
 # Example usage
 if __name__ == "__main__":
     # Load your PDF bytes here
     # For demonstration, we will assume pdf_bytes is available
     # Replace 'path_to_pdf' with your actual PDF file path
-    pdf_bytes = load_pdf_bytes("../data/input/poem.pdf")
+    pdf_bytes = load_pdf_bytes(PDF_LOCATION)
 
     # Since we cannot actually call the OpenAI API in this environment,
     # and we're simulating embeddings, the code execution is illustrative only.

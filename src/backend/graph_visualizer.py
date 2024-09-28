@@ -32,7 +32,7 @@ class GraphVisualizer:
                 logger.warning(f"No node found for token index {idx}")
                 continue
 
-            if node.is_whitespace_node:
+            if node.is_ignorable_node:
                 # Skip whitespace nodes
                 continue
 
@@ -89,7 +89,7 @@ class GraphVisualizer:
             for (from_id, to_id), weight in self.edge_weights.items()
         ]
         self.graph.add_edges_from(edges_to_add)
-        logger.info(f"Bulk added {len(edges_to_add)} edges to the graph.")
+        logger.debug(f"Bulk added {len(edges_to_add)} edges to the graph.")
 
     def visualize(self, output_path: str):
         """
